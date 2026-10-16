@@ -6,7 +6,6 @@ import warnings
 import cv2
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from skimage import measure
 from medpy import metric
 from fvcore.nn import FlopCountAnalysis
 from peft import LoraConfig, get_peft_model
@@ -62,14 +61,6 @@ class Config:
             2025: ""
         }
     }
-
-
-def keep_largest_connected_component(mask):
-    labels = measure.label(mask)
-    if labels.max() == 0: return mask
-    areas = np.bincount(labels.flat)[1:]
-    largest_idx = np.argmax(areas) + 1
-    return (labels == largest_idx).astype(mask.dtype)
 
 
 HD95_EMPTY_PENALTY = 360.624

@@ -6,7 +6,6 @@ import random
 import warnings
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from skimage import measure
 from medpy import metric
 from glob import glob
 from peft import LoraConfig, get_peft_model
@@ -35,7 +34,13 @@ class Config:
 
     decoder_path = "fine_grained_decoder.dpt_dcam_learn"
 
-    run_dir = "./runs/dcam_learn"
+    weight_paths = {
+        "BUSI": {
+            314: "",
+            404: "",
+            2025: "",
+        },
+    }
 
     repo_dir = "./dinov3"
     dino_ckpt = "../dataset/dinov3_vitb16.pth"
@@ -45,15 +50,6 @@ class Config:
     input_w = 256
     dice_thr = 0.5
     pixel_spacing = 1.0
-
-
-def keep_largest_connected_component(mask):
-    labels = measure.label(mask)
-    if labels.max() == 0: return mask
-    areas = np.bincount(labels.flat)[1:]
-    if len(areas) == 0: return mask
-    largest_idx = np.argmax(areas) + 1
-    return (labels == largest_idx).astype(mask.dtype)
 
 
 HD95_EMPTY_PENALTY = 360.624
@@ -138,68 +134,55 @@ def main():
         seed_results = {}
         agg_metrics = {metric: [] for metric in metrics_list}
 
+        dataset_weights = Config.weight_paths.get(current_dataset, {})
+
         for seed in Config.seeds_list:
             print(f"\n" + "=" * 60)
-            print(f"🔬 正在全面测试 Seed {seed} 的所有 Run...")
+            print(f"🔬 正在测试 Seed {seed} 验证集选定的权重...")
             print("=" * 60)
 
-            run_dirs_pattern = os.path.join(Config.run_dir,
-                                            f"dcam_learn_{Config.dino_size}_{Config.input_h}_{current_dataset}_seed{seed}_run*")
-            run_dirs = glob(run_dirs_pattern)
-
-            if not run_dirs:
-                print(f"⚠️ 找不到 Seed {seed} 的任何 run 文件夹。")
+            w_path = dataset_weights.get(seed, "")
+            if not w_path:
+                print(f"⚠️ Seed {seed}: Config.weight_paths 里没填权重路径，跳过。")
                 continue
 
-            best_test_dice = -1.0
-            best_run_metrics = None
-            best_run_name = ""
-            best_weight_file = ""
-
-            for r_dir in sorted(run_dirs):
-                weight_files = glob(os.path.join(r_dir, "best_ep*.pth"))
-                if not weight_files:
+            if os.path.isdir(w_path):
+                cands = sorted(glob(os.path.join(w_path, "best_ep*.pth")))
+                if not cands:
+                    print(f"⚠️ Seed {seed}: 目录里没有 best_ep*.pth: {w_path}")
                     continue
+                w_path = cands[-1]
 
-                w_path = sorted(weight_files)[-1]
-                run_id = os.path.basename(r_dir).split("_")[-2]
+            if not os.path.isfile(w_path):
+                print(f"⚠️ Seed {seed}: 权重文件不存在: {w_path}")
+                continue
 
-                model.load_state_dict(torch.load(w_path, map_location=device, weights_only=True))
-                model.eval()
+            print(f"📥 权重: {w_path}")
+            model.load_state_dict(torch.load(w_path, map_location=device, weights_only=True))
+            model.eval()
 
-                run_metrics_collector = {k: [] for k in metrics_list}
-                with torch.no_grad():
-                    for batch in tqdm(test_loader, desc=f"Testing {run_id}", leave=False):
-                        images, true_masks, _ = batch
-                        images = images.to(device)
+            seed_metrics_collector = {k: [] for k in metrics_list}
+            with torch.no_grad():
+                for batch in tqdm(test_loader, desc=f"Testing seed{seed}", leave=False):
+                    images, true_masks, _ = batch
+                    images = images.to(device)
 
-                        outputs = model(images)
-                        logits = outputs[0] if isinstance(outputs, (list, tuple)) else outputs
+                    outputs = model(images)
+                    logits = outputs[0] if isinstance(outputs, (list, tuple)) else outputs
 
-                        pred_np = keep_largest_connected_component(
-                            (torch.sigmoid(logits) > Config.dice_thr).float().squeeze().cpu().numpy())
-                        true_np = true_masks.squeeze().numpy()
+                    pred_np = (torch.sigmoid(logits) > Config.dice_thr).float().squeeze().cpu().numpy()
+                    true_np = true_masks.squeeze().numpy()
 
-                        m = calculate_metrics_numpy(pred_np, true_np, spacing=Config.pixel_spacing)
-                        for i, k in enumerate(metrics_list):
-                            run_metrics_collector[k].append(m[i])
+                    m = calculate_metrics_numpy(pred_np, true_np, spacing=Config.pixel_spacing)
+                    for i, k in enumerate(metrics_list):
+                        seed_metrics_collector[k].append(m[i])
 
-                run_mean_metrics = {k: np.nanmean(run_metrics_collector[k]) for k in metrics_list}
-                current_test_dice = run_mean_metrics["DICE"]
+            seed_row = {k: np.nanmean(seed_metrics_collector[k]) for k in metrics_list}
+            print(f"  └─ seed{seed} -> Test DICE: {seed_row['DICE']:.4f}")
 
-                print(f"  └─ {run_id} -> Test DICE: {current_test_dice:.4f} (Weights: {os.path.basename(w_path)})")
-
-                if current_test_dice > best_test_dice:
-                    best_test_dice = current_test_dice
-                    best_run_metrics = run_mean_metrics
-                    best_run_name = run_id
-                    best_weight_file = os.path.basename(w_path)
-
-            if best_run_metrics:
-                print(f"\n🥇 [Seed {seed} 冠军] {best_run_name} 胜出! Test DICE 达到 {best_test_dice:.4f}")
-                seed_results[seed] = best_run_metrics
-                for k in metrics_list:
-                    agg_metrics[k].append(best_run_metrics[k])
+            seed_results[seed] = seed_row
+            for k in metrics_list:
+                agg_metrics[k].append(seed_row[k])
 
         if not seed_results:
             continue
@@ -223,7 +206,7 @@ def main():
         for m_name in metrics_list:
             print(f"🎯 {m_name:<11} : {np.mean(agg_metrics[m_name]):.4f} ± {np.std(agg_metrics[m_name]):.4f}")
 
-    print("\n🎉 全部 18 次运行的真实测试已跑完，冠军阵容提取成功！")
+    print("\n🎉 全部种子的固定测试已完成（均使用验证集选定权重，无测试集选优）。")
 
 
 if __name__ == "__main__":
