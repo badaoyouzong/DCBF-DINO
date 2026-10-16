@@ -213,7 +213,7 @@ def main():
 
     var_name = "dcam_learn"
     use_dcam = True
-    use_ufa = True
+    use_baff = True
 
     for current_dataset in Config.datasets_list:
         root = os.path.join(Config.data_dir, current_dataset)
@@ -267,7 +267,7 @@ def main():
 
             decoder_module = importlib.import_module(Config.decoder_path)
             model = decoder_module.DPT(nclass=Config.num_classes, backbone=backbone,
-                                       use_dcam=use_dcam, use_ufa=use_ufa)
+                                       use_dcam=use_dcam, use_baff=use_baff)
             model = model.to(device)
 
             optimizer = torch.optim.AdamW(

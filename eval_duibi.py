@@ -107,13 +107,13 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     val_transform = MedicalAugmentation(size=(Config.input_h, Config.input_w), is_train=False)
 
-    print("🚀 初始化 Ours_Full 模型 (LoRA + DCAM + UFA)...")
+    print("🚀 初始化 Ours_Full 模型 (LoRA + DCAM + BAFF)...")
 
     base = torch.hub.load(Config.repo_dir, 'dinov3_vitb16', source='local', weights=Config.dino_ckpt)
     lora_cfg = LoraConfig(r=8, lora_alpha=32, target_modules=["qkv", "proj"], lora_dropout=0.05, bias="none")
     backbone = get_peft_model(base, lora_cfg)
 
-    model = DPT(nclass=Config.num_classes, backbone=backbone, use_dcam=True, use_ufa=True).to(device)
+    model = DPT(nclass=Config.num_classes, backbone=backbone, use_dcam=True, use_baff=True).to(device)
 
     metrics_list = ["DICE", "mIOU", "Precision", "Se", "Specificity", "HD95"]
 

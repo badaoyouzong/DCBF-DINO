@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from fine_grained_decoder.blocks import FeatureFusionBlock
 from new.DCAM_learn import DCAM_Module
-from new.BAFF import UFA_Module
+from new.BAFF import BAFF_Module
 
 
 def _make_fusion_block(features, use_bn, size=None):
@@ -28,12 +28,12 @@ class DPTHead(nn.Module):
             use_bn=False,
             out_channels=[96, 192, 384, 768],
             use_dcam=True,
-            use_ufa=True
+            use_baff=True
     ):
         super(DPTHead, self).__init__()
 
         self.use_dcam = use_dcam
-        self.use_ufa = use_ufa
+        self.use_baff = use_baff
 
         self.projects = nn.ModuleList([
             nn.Conv2d(in_channels, oc, kernel_size=1) for oc in out_channels
@@ -75,9 +75,9 @@ class DPTHead(nn.Module):
         else:
             self.dcam_blocks = None
 
-        if self.use_ufa:
+        if self.use_baff:
             self.baff_blocks = nn.ModuleList([
-                UFA_Module(features) for _ in range(3)
+                BAFF_Module(features) for _ in range(3)
             ])
         else:
             self.baff_blocks = None
@@ -119,7 +119,7 @@ class DPTHead(nn.Module):
 
         aux_out1 = self.aux_heads[0](path_3)
 
-        if self.use_ufa:
+        if self.use_baff:
             path_3_baff = self.baff_blocks[2](path_3, aux_out1)
         else:
             path_3_baff = path_3
@@ -133,7 +133,7 @@ class DPTHead(nn.Module):
 
         aux_out2 = self.aux_heads[1](path_2)
 
-        if self.use_ufa:
+        if self.use_baff:
             path_2_baff = self.baff_blocks[1](path_2, aux_out2)
         else:
             path_2_baff = path_2
@@ -147,7 +147,7 @@ class DPTHead(nn.Module):
 
         temp_main_out = self.output_conv(path_1)
 
-        if self.use_ufa:
+        if self.use_baff:
             path_1_baff = self.baff_blocks[0](path_1, temp_main_out)
         else:
             path_1_baff = path_1
@@ -172,7 +172,7 @@ class DPT(nn.Module):
             use_bn=False,
             backbone=None,
             use_dcam=True,
-            use_ufa=True
+            use_baff=True
     ):
         super(DPT, self).__init__()
 
@@ -187,7 +187,7 @@ class DPT(nn.Module):
         self.backbone = backbone
 
         self.head = DPTHead(nclass, self.backbone.embed_dim, features, use_bn, out_channels=out_channels,
-                            use_dcam=use_dcam, use_ufa=use_ufa)
+                            use_dcam=use_dcam, use_baff=use_baff)
 
     def lock_backbone(self):
         for p in self.backbone.parameters():

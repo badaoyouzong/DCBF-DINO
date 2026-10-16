@@ -104,7 +104,7 @@ def main():
     backbone = get_peft_model(base_model, lora_cfg)
 
     decoder_module = importlib.import_module(Config.decoder_path)
-    model = decoder_module.DPT(nclass=Config.num_classes, backbone=backbone, use_dcam=True, use_ufa=True)
+    model = decoder_module.DPT(nclass=Config.num_classes, backbone=backbone, use_dcam=True, use_baff=True)
     model = model.to(device)
 
     for current_dataset in Config.datasets_list:
